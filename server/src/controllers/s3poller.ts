@@ -31,10 +31,10 @@ export const polls3 = async () => {
       return SUPPORTED_VIDEO_EXTENSIONS.includes(ext) && !seenkeys.has(Key);
     });
 
-    console.log(
-      "New Videos:",
-      newVideos.map((v) => v.Key)
-    );
+    // console.log(
+    //   "New Videos:",
+    //   newVideos.map((v) => v.Key)
+    // );
 
     for (const { Key } of newVideos) {
       console.log(` New video detected: ${Key}`);

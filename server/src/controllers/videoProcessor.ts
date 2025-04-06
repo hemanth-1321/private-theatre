@@ -29,6 +29,19 @@ const RESOLUTIONS = [
   { name: "720p", width: 1280, height: 720, bitrate: 2800 },
 ];
 
+// 🔍 Helper: Check if input video has an audio stream
+const hasAudioStream = async (filePath: string): Promise<boolean> => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      const hasAudio = metadata.streams.some(
+        (stream) => stream.codec_type === "audio"
+      );
+      resolve(hasAudio);
+    });
+  });
+};
+
 export const processVideoToHLS = async (key: string) => {
   const inputBucket = process.env.TEMP_BUCKET!;
   const outputBucket = process.env.PROD_BUCKET!;
@@ -39,9 +52,9 @@ export const processVideoToHLS = async (key: string) => {
   const outputDir = path.resolve(videoName);
 
   try {
-    console.log("Starting HLS processing for:", key);
+    console.log("🚀 Starting HLS processing for:", key);
 
-    console.log(`Downloading from S3 bucket: ${inputBucket}, key: ${key}`);
+    console.log(`📥 Downloading from S3 bucket: ${inputBucket}, key: ${key}`);
     const result = await s3Client.send(
       new GetObjectCommand({ Bucket: inputBucket, Key: key })
     );
@@ -51,7 +64,11 @@ export const processVideoToHLS = async (key: string) => {
     }
 
     await pipeline(result.Body, createWriteStream(localInputPath));
-    console.log(`Video downloaded locally as: ${localInputPath}`);
+    console.log(`📄 Video downloaded locally as: ${localInputPath}`);
+
+    // 🔍 Detect if the video has audio
+    const hasAudio = await hasAudioStream(localInputPath);
+    console.log("🎧 Audio track present?", hasAudio);
 
     console.log("🎞️ Starting HLS transcoding...");
     await Promise.all(
@@ -60,19 +77,18 @@ export const processVideoToHLS = async (key: string) => {
         const playlistPath = `${outPath}/${res.name}.m3u8`;
         const segmentPath = `${outPath}/${res.name}_%03d.ts`;
 
-        console.log(`Creating output directory: ${outPath}`);
+        console.log(`📁 Creating output directory: ${outPath}`);
         await mkdir(outPath, { recursive: true });
 
         return new Promise<void>((resolve, reject) => {
-          console.log(`Transcoding ${res.name} → ${res.width}x${res.height}`);
+          console.log(
+            `⚙️ Transcoding ${res.name} → ${res.width}x${res.height}`
+          );
           ffmpeg(localInputPath)
             .outputOptions([
               "-vf",
               `scale=w=${res.width}:h=${res.height}`,
-              "-c:a",
-              "aac",
-              "-ar",
-              "48000",
+              ...(hasAudio ? ["-c:a", "aac", "-ar", "48000"] : ["-an"]), // Skip audio if none present
               "-c:v",
               "h264",
               "-profile:v",
@@ -100,14 +116,14 @@ export const processVideoToHLS = async (key: string) => {
             ])
             .output(playlistPath)
             .on("start", (cmd) => {
-              console.log(`FFmpeg command for ${res.name}:`, cmd);
+              console.log(`🔧 FFmpeg command for ${res.name}:`, cmd);
             })
             .on("end", () => {
-              console.log(`Done transcoding ${res.name}`);
+              console.log(`✅ Done transcoding ${res.name}`);
               resolve();
             })
             .on("error", (err) => {
-              console.error(`FFmpeg error for ${res.name}:`, err.message);
+              console.error(`❌ FFmpeg error for ${res.name}:`, err.message);
               reject(err);
             })
             .run();
@@ -128,9 +144,9 @@ export const processVideoToHLS = async (key: string) => {
 
     const masterPath = path.join(outputDir, "master.m3u8");
     await writeFile(masterPath, masterPlaylist);
-    console.log("Created master.m3u8 at:", masterPath);
+    console.log("📄 Created master.m3u8 at:", masterPath);
 
-    console.log(" Uploading HLS assets to S3...");
+    console.log("☁️ Uploading HLS assets to S3...");
     const allResDirs = await readdir(outputDir, { withFileTypes: true });
 
     for (const fileOrDir of allResDirs) {
@@ -157,7 +173,7 @@ export const processVideoToHLS = async (key: string) => {
             })
           );
 
-          console.log(`Uploaded: ${keyName}`);
+          console.log(`✅ Uploaded: ${keyName}`);
         }
       } else if (name === "master.m3u8") {
         const body = await readFile(path.join(outputDir, name));
@@ -172,16 +188,16 @@ export const processVideoToHLS = async (key: string) => {
           })
         );
 
-        console.log(`Uploaded: ${keyName}`);
+        console.log(`✅ Uploaded: ${keyName}`);
       }
     }
 
-    // Cleanup
+    // 🧹 Cleanup
     await unlink(localInputPath);
-    console.log(`Deleted local input file: ${localInputPath}`);
+    console.log(`🗑️ Deleted local input file: ${localInputPath}`);
 
     await rm(outputDir, { recursive: true, force: true });
-    console.log(`Deleted local output directory: ${outputDir}`);
+    console.log(`🗑️ Deleted local output directory: ${outputDir}`);
 
     await s3Client.send(
       new DeleteObjectCommand({
@@ -189,10 +205,10 @@ export const processVideoToHLS = async (key: string) => {
         Key: key,
       })
     );
-    console.log(`Deleted original video from S3 bucket: ${inputBucket}/${key}`);
+    console.log(`🗑️ Deleted original video from S3: ${inputBucket}/${key}`);
 
-    console.log("HLS processing completed successfully.");
+    console.log("🎉 HLS processing completed successfully.");
   } catch (err: any) {
-    console.error("HLS Processing Error:", err.message);
+    console.error("❌ HLS Processing Error:", err.message);
   }
 };
